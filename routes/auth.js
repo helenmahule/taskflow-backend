@@ -5,10 +5,9 @@ const jwt = require("jsonwebtoken");
 const db = require("../database");
 
 // Register
-router.post("/register", (req, res) => {
+router.post("/register", async (req, res) => {
   const { name, email, password } = req.body;
 
-  // Validation
   if (!name || !email || !password) {
     return res.status(400).json({ error: "All fields are required" });
   }
@@ -17,57 +16,48 @@ router.post("/register", (req, res) => {
     return res.status(400).json({ error: "Password must be at least 6 characters" });
   }
 
-  // Check if email already exists
-  db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: "Database error" });
-    }
-    if (user) {
+  try {
+    const existing = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (existing.rows.length > 0) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Hash password
     const hashedPassword = bcrypt.hashSync(password, 10);
 
-    // Save user
-    db.run(
-      "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-      [name, email, hashedPassword],
-      function (err) {
-        if (err) {
-          return res.status(500).json({ error: "Could not create user" });
-        }
-        res.status(201).json({ message: "Account created successfully" });
-      }
+    await db.query(
+      "INSERT INTO users (name, email, password) VALUES ($1, $2, $3)",
+      [name, email, hashedPassword]
     );
-  });
+
+    res.status(201).json({ message: "Account created successfully" });
+
+  } catch (err) {
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // Login
-router.post("/login", (req, res) => {
+router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
-  // Validation
   if (!email || !password) {
     return res.status(400).json({ error: "All fields are required" });
   }
 
-  // Find user
-  db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: "Database error" });
-    }
-    if (!user) {
+  try {
+    const result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+
+    if (result.rows.length === 0) {
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
-    // Check password
+    const user = result.rows[0];
     const validPassword = bcrypt.compareSync(password, user.password);
+
     if (!validPassword) {
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
-    // Generate token
     const token = jwt.sign(
       { id: user.id, email: user.email },
       process.env.JWT_SECRET,
@@ -79,7 +69,10 @@ router.post("/login", (req, res) => {
       token,
       user: { id: user.id, name: user.name, email: user.email }
     });
-  });
+
+  } catch (err) {
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 module.exports = router;
